@@ -6,6 +6,7 @@ import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import android.text.TextUtils
@@ -62,25 +63,20 @@ internal object FileUtils {
         values.put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis())
         values.put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
 
-        var imageUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        var imageUri: Uri? = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         try {
-            imageUri = contentResolver.insert(imageUri, values)
-
+            imageUri = insertOrUpdateImage(contentResolver, file, imageUri, values)
             if (source != null) {
                 var outputStream: OutputStream? = null
                 if (imageUri != null) {
                     outputStream = contentResolver.openOutputStream(imageUri)
-                }
-
-                outputStream?.use {
                     outputStream.write(source)
+                    val pathId = ContentUris.parseId(imageUri)
+                    val miniThumb = MediaStore.Images.Thumbnails.getThumbnail(
+                        contentResolver, pathId, MediaStore.Images.Thumbnails.MINI_KIND, null
+                    )
+                    storeThumbnail(contentResolver, miniThumb, pathId)
                 }
-
-                val pathId = ContentUris.parseId(imageUri)
-                val miniThumb = MediaStore.Images.Thumbnails.getThumbnail(
-                    contentResolver, pathId, MediaStore.Images.Thumbnails.MINI_KIND, null
-                )
-                storeThumbnail(contentResolver, miniThumb, pathId)
             } else {
                 if (imageUri != null) {
                     contentResolver.delete(imageUri, null, null)
@@ -93,6 +89,23 @@ internal object FileUtils {
         }
 
         return true
+    }
+
+    private fun insertOrUpdateImage(contentResolver: ContentResolver, file: File, imageUri: Uri?, values: ContentValues): Uri? {
+        var resultImageUri: Uri? = null;
+        val queryArgs = """${MediaStore.Images.ImageColumns.DATA} = ?"""
+        val selectionArgs = arrayOf(file.name)
+        val result = contentResolver.query(imageUri, null, queryArgs, selectionArgs, null)
+        if (result != null && result.moveToFirst()) {
+            val imageUriId = result.getLong(result.getColumnIndex(MediaStore.Images.ImageColumns._ID))
+            resultImageUri = ContentUris
+                    .withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, imageUriId)
+            contentResolver.update(imageUri, values, null, null)
+            result.close()
+        } else {
+            resultImageUri = contentResolver.insert(imageUri, values)
+        }
+        return resultImageUri
     }
 
     /**
@@ -221,7 +234,7 @@ internal object FileUtils {
 
     /**
      * @param contentResolver - content resolver
-     * @param path            - path to temp file that needs to be stored
+     * @param inputPath            - path to temp file that needs to be stored
      * @param folderName      - folder name for storing video
      * @return true if video was saved successfully
      */
